@@ -19,7 +19,8 @@ app.use("/doctor/schedule", require("./routes/schedule.routes"));
 app.use("/appointments", require("./routes/appointmentRoutes"))
 app.use("/users",require("./routes/user.routes"))
 app.use("/ai", require("./routes/ai.routes"));
-
+app.use("/chat", require("./routes/chat.routes"));
+app.use("/patient", require("./routes/patient.routes"));
 
 app.get("/", (req, res) => {
   res.send("E-Healthcare Backend Running...");

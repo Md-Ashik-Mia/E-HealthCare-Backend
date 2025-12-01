@@ -8,6 +8,6 @@ const userController = require('../controllers/user.controller');
 router.get('',auth,role("admin"),userController.getAllUsers)
 // Change POST to GET since you're retrieving data
 router.get('/doctors', userController.getApprovedDoctors);
-router.get('/doctors/approved', auth,role('admin'),  userController.getAllDoctors);
+router.get('/doctors/approved',   userController.getAllDoctors);
 
 module.exports = router;
