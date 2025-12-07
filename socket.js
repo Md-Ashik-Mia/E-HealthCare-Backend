@@ -6,19 +6,6 @@ const mongoose = require("mongoose");
 const Message = require("./models/Message");  
 const Conversation = require("./models/Conversation");
 const DoctorProfile = require("./models/DoctorProfile");
-const User = require("./models/User");
-const axios = require("axios");
-const AIResponse = require("./models/ai.model");
-
-// 🚀 SOCKET CONNECTION FUNCTION
-const initializeSocket = (server) => {
-    const io = new Server(server, {
-        cors: {
-            origin: ["http://localhost:3000", "https://e-healthcare-frontend.onrender.com", "https://your-production-app.com", "*"],
-            methods: ["GET", "POST"],
-        },
-    });
-
     console.log("🟢 Socket.io Initialized");
 
     // track online users: Map<userId, socketId>
