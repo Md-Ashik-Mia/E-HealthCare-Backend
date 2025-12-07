@@ -32,6 +32,9 @@ app.use("/users",require("./routes/user.routes"))
 app.use("/ai", require("./routes/ai.routes"));
 app.use("/chat", require("./routes/chat.routes"));
 app.use("/patient", require("./routes/patient.routes"));
+app.use("/prescriptions", require("./routes/prescription.routes"));
+app.use("/medical-records", require("./routes/medicalRecord.routes"));
+app.use("/notifications", require("./routes/notification.routes"));
 
 app.get("/", (req, res) => {
   res.send("E-Healthcare Backend Running...");

@@ -190,4 +190,14 @@ const initializeSocket = (server) => {
     });
 };
 
-module.exports = initializeSocket;
+// Export both the initialization function and a way to get the io instance
+let ioInstance = null;
+
+const wrappedInitialize = (server) => {
+    const io = initializeSocket(server);
+    ioInstance = io;
+    return io;
+};
+
+module.exports = wrappedInitialize;
+module.exports.getIO = () => ioInstance;
