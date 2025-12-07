@@ -3,7 +3,14 @@ const express = require("express");
 const cors = require("cors");
 const connectDB = require("./config/db");
 
+const http = require("http");
+const initializeSocket = require("./socket");
+
 const app = express();
+const server = http.createServer(app);
+
+// Initialize Socket.io
+initializeSocket(server);
 
 app.use(cors());
 app.use(express.json());
@@ -27,4 +34,4 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

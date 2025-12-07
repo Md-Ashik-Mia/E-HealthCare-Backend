@@ -9,198 +9,157 @@ const DoctorProfile = require("./models/DoctorProfile");
 const User = require("./models/User");
 const axios = require("axios");
 
-// Start standalone Socket.IO server
-const server = http.createServer();
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"],
-    },
-});
-
-// 🔗 Connect MongoDB
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("🟢 Socket Server MongoDB Connected"))
-    .catch((err) => console.log("❌ MongoDB Error:", err));
-
-
-// 📌 Track online users
-const onlineUsers = new Map();
-
-// Helper: Send Gemini AI Auto Reply
-async function generateAIReply(doctorId, patientMessage) {
-    try {
-        // Load doctor profile
-        const profile = await DoctorProfile.findOne({ userId: doctorId });
-
-        if (!profile?.isAutoAIReplyEnabled) return null;
-
-        const prompt = `
-Doctor Instructions: ${profile.aiInstructions}
-Patient Message: ${patientMessage}
-Generate a short helpful response as the doctor.
-        `;
-
-        const result = await axios.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" + process.env.GEMINI_API_KEY,
-            {
-                contents: [{ parts: [{ text: prompt }] }]
-            }
-        );
-
-        return result.data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-    } catch (err) {
-        console.log("AI Reply Error:", err.message);
-        return null;
-    }
-}
-
-
-// 🚀 SOCKET CONNECTION
-io.on("connection", (socket) => {
-    console.log("⚡ User connected:", socket.id);
-
-    // Log all incoming events for debugging
-    socket.onAny((eventName, ...args) => {
-        console.log(`📥 Received event: ${eventName}`, args);
+// 🚀 SOCKET CONNECTION FUNCTION
+const initializeSocket = (server) => {
+    const io = new Server(server, {
+        cors: {
+            origin: "*",
+            methods: ["GET", "POST"],
+        },
     });
 
-    // 1️⃣ Register user (online)
-    socket.on("user:online", (userId) => {
-        onlineUsers.set(userId, socket.id);
-        socket.userId = userId;
+    console.log("🟢 Socket.io Initialized");
 
-        console.log(`🟢 User Online: ${userId}`);
+    io.on("connection", (socket) => {
+        console.log("⚡ User connected:", socket.id);
 
-        io.emit("presence:update", [...onlineUsers.keys()]);
-    });
+        // Log all incoming events for debugging
+        socket.onAny((eventName, ...args) => {
+            console.log(`📥 Received event: ${eventName}`, args);
+        });
 
-    // 2️⃣ Typing Indicator
-    socket.on("typing:start", (data) => {
-        const targetSocket = onlineUsers.get(data.to);
-        if (targetSocket) {
-            io.to(targetSocket).emit("typing:start", {
-                from: data.from,
-            });
-        }
-    });
+        // 1️⃣ Register user (online)
+        socket.on("user:online", (userId) => {
+            onlineUsers.set(userId, socket.id);
+            socket.userId = userId;
 
-    socket.on("typing:stop", (data) => {
-        const targetSocket = onlineUsers.get(data.to);
-        if (targetSocket) {
-            io.to(targetSocket).emit("typing:stop", {
-                from: data.from,
-            });
-        }
-    });
+            console.log(`🟢 User Online: ${userId}`);
 
-    // 3️⃣ Real-time Messaging
-    socket.on("message:send", async (data) => {
-        try {
-            const { conversationId, from, to, message } = data;
-            console.log("📨 Message received:", { conversationId, from, to, message });
-
-            // Save message to database
-            const msg = await Message.create({
-                conversationId,
-                senderId: from,
-                receiverId: to,
-                message,
-            });
-            console.log("✅ Message saved to DB:", msg._id);
-
-            // Update conversation's lastMessage
-            await Conversation.findByIdAndUpdate(conversationId, {
-                lastMessage: message,
-                lastSender: from,
-            });
-            console.log("✅ Conversation updated");
-
-            // Send confirmation to sender
-            socket.emit("message:receive", msg);
-            console.log("📤 Confirmation sent to sender");
-
-            // Deliver to receiver if online
-            const targetSocket = onlineUsers.get(to);
-            if (targetSocket) {
-                io.to(targetSocket).emit("message:receive", msg);
-                console.log("📤 Message sent to receiver");
-            } else {
-                console.log("⚠️ Receiver offline");
-            }
-
-            // AI Auto Reply Logic
-            const receiver = await User.findById(to);
-            if (receiver && receiver.role === "doctor") {
-                // patient → doctor message → maybe AI reply
-                const aiReply = await generateAIReply(receiver._id, message);
-
-                if (aiReply) {
-                    const replyMsg = await Message.create({
-                        conversationId,
-                        senderId: to,
-                        receiverId: from,
-                        message: aiReply,
-                        isAI: true
-                    });
-
-                    // Update conversation with AI reply
-                    await Conversation.findByIdAndUpdate(conversationId, {
-                        lastMessage: aiReply,
-                        lastSender: to,
-                    });
-
-                    // Send AI reply to patient
-                    io.to(socket.id).emit("message:receive", replyMsg);
-                    
-                    // Send to doctor if online
-                    if (targetSocket) {
-                        io.to(targetSocket).emit("message:receive", replyMsg);
-                    }
-                    console.log("🤖 AI reply sent");
-                }
-            }
-        } catch (err) {
-            console.error("❌ Message Send Error:", err);
-            socket.emit("message:error", { error: err.message });
-        }
-    });
-
-    // 4️⃣ WebRTC Signaling (Audio/Video Calls)
-    socket.on("call:offer", (data) => {
-        const targetSocket = onlineUsers.get(data.to);
-        if (targetSocket) io.to(targetSocket).emit("call:offer", data);
-    });
-
-    socket.on("call:answer", (data) => {
-        const targetSocket = onlineUsers.get(data.to);
-        if (targetSocket) io.to(targetSocket).emit("call:answer", data);
-    });
-
-    socket.on("call:ice-candidate", (data) => {
-        const targetSocket = onlineUsers.get(data.to);
-        if (targetSocket) io.to(targetSocket).emit("call:ice-candidate", data);
-    });
-
-    socket.on("call:end", (data) => {
-        const targetSocket = onlineUsers.get(data.to);
-        if (targetSocket) io.to(targetSocket).emit("call:end", data);
-    });
-
-    // 5️⃣ Disconnect event
-    socket.on("disconnect", () => {
-        console.log("🔴 User disconnected:", socket.id);
-
-        if (socket.userId) {
-            onlineUsers.delete(socket.userId);
             io.emit("presence:update", [...onlineUsers.keys()]);
-        }
+        });
+
+        // 2️⃣ Typing Indicator
+        socket.on("typing:start", (data) => {
+            const targetSocket = onlineUsers.get(data.to);
+            if (targetSocket) {
+                io.to(targetSocket).emit("typing:start", {
+                    from: data.from,
+                });
+            }
+        });
+
+        socket.on("typing:stop", (data) => {
+            const targetSocket = onlineUsers.get(data.to);
+            if (targetSocket) {
+                io.to(targetSocket).emit("typing:stop", {
+                    from: data.from,
+                });
+            }
+        });
+
+        // 3️⃣ Real-time Messaging
+        socket.on("message:send", async (data) => {
+            try {
+                const { conversationId, from, to, message } = data;
+                console.log("📨 Message received:", { conversationId, from, to, message });
+
+                // Save message to database
+                const msg = await Message.create({
+                    conversationId,
+                    senderId: from,
+                    receiverId: to,
+                    message,
+                });
+                console.log("✅ Message saved to DB:", msg._id);
+
+                // Update conversation's lastMessage
+                await Conversation.findByIdAndUpdate(conversationId, {
+                    lastMessage: message,
+                    lastSender: from,
+                });
+                console.log("✅ Conversation updated");
+
+                // Send confirmation to sender
+                socket.emit("message:receive", msg);
+                console.log("📤 Confirmation sent to sender");
+
+                // Deliver to receiver if online
+                const targetSocket = onlineUsers.get(to);
+                if (targetSocket) {
+                    io.to(targetSocket).emit("message:receive", msg);
+                    console.log("📤 Message sent to receiver");
+                } else {
+                    console.log("⚠️ Receiver offline");
+                }
+
+                // AI Auto Reply Logic
+                const receiver = await User.findById(to);
+                if (receiver && receiver.role === "doctor") {
+                    // patient → doctor message → maybe AI reply
+                    const aiReply = await generateAIReply(receiver._id, message);
+
+                    if (aiReply) {
+                        const replyMsg = await Message.create({
+                            conversationId,
+                            senderId: to,
+                            receiverId: from,
+                            message: aiReply,
+                            isAI: true
+                        });
+
+                        // Update conversation with AI reply
+                        await Conversation.findByIdAndUpdate(conversationId, {
+                            lastMessage: aiReply,
+                            lastSender: to,
+                        });
+
+                        // Send AI reply to patient
+                        io.to(socket.id).emit("message:receive", replyMsg);
+                        
+                        // Send to doctor if online
+                        if (targetSocket) {
+                            io.to(targetSocket).emit("message:receive", replyMsg);
+                        }
+                        console.log("🤖 AI reply sent");
+                    }
+                }
+            } catch (err) {
+                console.error("❌ Message Send Error:", err);
+                socket.emit("message:error", { error: err.message });
+            }
+        });
+
+        // 4️⃣ WebRTC Signaling (Audio/Video Calls)
+        socket.on("call:offer", (data) => {
+            const targetSocket = onlineUsers.get(data.to);
+            if (targetSocket) io.to(targetSocket).emit("call:offer", data);
+        });
+
+        socket.on("call:answer", (data) => {
+            const targetSocket = onlineUsers.get(data.to);
+            if (targetSocket) io.to(targetSocket).emit("call:answer", data);
+        });
+
+        socket.on("call:ice-candidate", (data) => {
+            const targetSocket = onlineUsers.get(data.to);
+            if (targetSocket) io.to(targetSocket).emit("call:ice-candidate", data);
+        });
+
+        socket.on("call:end", (data) => {
+            const targetSocket = onlineUsers.get(data.to);
+            if (targetSocket) io.to(targetSocket).emit("call:end", data);
+        });
+
+        // 5️⃣ Disconnect event
+        socket.on("disconnect", () => {
+            console.log("🔴 User disconnected:", socket.id);
+
+            if (socket.userId) {
+                onlineUsers.delete(socket.userId);
+                io.emit("presence:update", [...onlineUsers.keys()]);
+            }
+        });
     });
-});
+};
 
-
-// 🚀 Start socket server
-const PORT = process.env.SOCKET_PORT || 3001;
-server.listen(PORT, () => {
-    console.log("🚀 Socket.io Server Running on port:", PORT);
-});
+module.exports = initializeSocket;
