@@ -13,9 +13,14 @@ const server = http.createServer(app);
 initializeSocket(server);
 
 app.use(cors({
-    origin: ["http://localhost:3000", "https://e-healthcare-frontend.onrender.com", "*"],
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true
+    origin: [
+        "http://localhost:3000", 
+        "https://e-health-care-front-end.vercel.app",
+        "https://e-healthcare-backend.onrender.com"
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json());
 
