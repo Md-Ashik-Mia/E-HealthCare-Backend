@@ -7,7 +7,7 @@ const Message = require("../models/Message");
 router.post("/start", auth, async (req, res) => {
   try {
     const { userId } = req.body;
-    const currentUser = req.user.id;
+    const currentUser = req.user.sub; // Changed from req.user.id
 
     // Check if existing conversation
     let convo = await Conversation.findOne({
@@ -43,7 +43,7 @@ router.get("/:id/messages", auth, async (req, res) => {
 router.get("/my", auth, async (req, res) => {
   try {
     const conversations = await Conversation
-      .find({ participants: req.user.id })
+      .find({ participants: req.user.sub }) // Changed from req.user.id
       .populate("participants", "name email role")
       .sort({ updatedAt: -1 });
 

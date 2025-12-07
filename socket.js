@@ -60,6 +60,11 @@ Generate a short helpful response as the doctor.
 io.on("connection", (socket) => {
     console.log("⚡ User connected:", socket.id);
 
+    // Log all incoming events for debugging
+    socket.onAny((eventName, ...args) => {
+        console.log(`📥 Received event: ${eventName}`, args);
+    });
+
     // 1️⃣ Register user (online)
     socket.on("user:online", (userId) => {
         onlineUsers.set(userId, socket.id);
@@ -91,39 +96,73 @@ io.on("connection", (socket) => {
 
     // 3️⃣ Real-time Messaging
     socket.on("message:send", async (data) => {
-        const { conversationId, from, to, message } = data;
+        try {
+            const { conversationId, from, to, message } = data;
+            console.log("📨 Message received:", { conversationId, from, to, message });
 
-        // Save DB
-        const msg = await Message.create({
-            conversationId,
-            senderId: from,
-            receiverId: to,
-            message,
-        });
+            // Save message to database
+            const msg = await Message.create({
+                conversationId,
+                senderId: from,
+                receiverId: to,
+                message,
+            });
+            console.log("✅ Message saved to DB:", msg._id);
 
-        // Deliver to receiver
-        const targetSocket = onlineUsers.get(to);
-        if (targetSocket) {
-            io.to(targetSocket).emit("message:receive", msg);
-        }
+            // Update conversation's lastMessage
+            await Conversation.findByIdAndUpdate(conversationId, {
+                lastMessage: message,
+                lastSender: from,
+            });
+            console.log("✅ Conversation updated");
 
-        // AI Auto Reply Logic
-        const receiver = await User.findById(to);
-        if (receiver.role === "doctor") {
-            // patient → doctor message → maybe AI reply
-            const aiReply = await generateAIReply(receiver._id, message);
+            // Send confirmation to sender
+            socket.emit("message:receive", msg);
+            console.log("📤 Confirmation sent to sender");
 
-            if (aiReply) {
-                const replyMsg = await Message.create({
-                    conversationId,
-                    senderId: to,
-                    receiverId: from,
-                    message: aiReply,
-                    isAI: true
-                });
-
-                io.to(socket.id).emit("message:receive", replyMsg);
+            // Deliver to receiver if online
+            const targetSocket = onlineUsers.get(to);
+            if (targetSocket) {
+                io.to(targetSocket).emit("message:receive", msg);
+                console.log("📤 Message sent to receiver");
+            } else {
+                console.log("⚠️ Receiver offline");
             }
+
+            // AI Auto Reply Logic
+            const receiver = await User.findById(to);
+            if (receiver && receiver.role === "doctor") {
+                // patient → doctor message → maybe AI reply
+                const aiReply = await generateAIReply(receiver._id, message);
+
+                if (aiReply) {
+                    const replyMsg = await Message.create({
+                        conversationId,
+                        senderId: to,
+                        receiverId: from,
+                        message: aiReply,
+                        isAI: true
+                    });
+
+                    // Update conversation with AI reply
+                    await Conversation.findByIdAndUpdate(conversationId, {
+                        lastMessage: aiReply,
+                        lastSender: to,
+                    });
+
+                    // Send AI reply to patient
+                    io.to(socket.id).emit("message:receive", replyMsg);
+                    
+                    // Send to doctor if online
+                    if (targetSocket) {
+                        io.to(targetSocket).emit("message:receive", replyMsg);
+                    }
+                    console.log("🤖 AI reply sent");
+                }
+            }
+        } catch (err) {
+            console.error("❌ Message Send Error:", err);
+            socket.emit("message:error", { error: err.message });
         }
     });
 
@@ -148,16 +187,6 @@ io.on("connection", (socket) => {
         if (targetSocket) io.to(targetSocket).emit("call:end", data);
     });
 
-
-
-
-
-
-
-
-
-
-
     // 5️⃣ Disconnect event
     socket.on("disconnect", () => {
         console.log("🔴 User disconnected:", socket.id);
@@ -171,7 +200,7 @@ io.on("connection", (socket) => {
 
 
 // 🚀 Start socket server
-const PORT = process.env.SOCKET_PORT || 6000;
+const PORT = process.env.SOCKET_PORT || 3001;
 server.listen(PORT, () => {
     console.log("🚀 Socket.io Server Running on port:", PORT);
 });

@@ -1,6 +1,7 @@
 const { default: mongoose } = require("mongoose");
 const Appointment = require("../models/Appointment");
 const DoctorSchedule = require("../models/DoctorSchedule");
+const Conversation = require("../models/Conversation");
 
 // 📌 Book Appointment
 exports.bookAppointment = async (req, res) => {
@@ -16,6 +17,18 @@ exports.bookAppointment = async (req, res) => {
       time,
       note,
     });
+
+    // ✨ Auto-create conversation between patient and doctor
+    let conversation = await Conversation.findOne({
+      participants: { $all: [patientId, doctorId] },
+    });
+
+    if (!conversation) {
+      conversation = await Conversation.create({
+        participants: [patientId, doctorId],
+        lastMessage: "Appointment booked",
+      });
+    }
 
     res.json({ message: "Appointment booked", appointment });
   } catch (error) {
