@@ -12,7 +12,11 @@ const server = http.createServer(app);
 // Initialize Socket.io
 initializeSocket(server);
 
-app.use(cors());
+app.use(cors({
+    origin: ["http://localhost:3000", "https://e-healthcare-frontend.onrender.com", "*"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
+}));
 app.use(express.json());
 
 // Connect DB

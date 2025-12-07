@@ -8,17 +8,45 @@ const Conversation = require("./models/Conversation");
 const DoctorProfile = require("./models/DoctorProfile");
 const User = require("./models/User");
 const axios = require("axios");
+const AIResponse = require("./models/ai.model");
 
 // 🚀 SOCKET CONNECTION FUNCTION
 const initializeSocket = (server) => {
     const io = new Server(server, {
         cors: {
-            origin: "*",
+            origin: ["http://localhost:3000", "https://e-healthcare-frontend.onrender.com", "https://your-production-app.com", "*"],
             methods: ["GET", "POST"],
         },
     });
 
     console.log("🟢 Socket.io Initialized");
+
+    // track online users: Map<userId, socketId>
+    const onlineUsers = new Map();
+
+    // Safe AI reply generator used by the socket logic. Returns a string or null.
+    async function generateAIReply(doctorId, messageText) {
+        try {
+            // Check doctor-specific AI settings
+            const settings = await AIResponse.findOne({ doctorId });
+            if (!settings || !settings.isAIEnabled) return null;
+
+            // If no external AI key, skip calling external API and return null
+            if (!process.env.GEMINI_API_KEY) return null;
+
+            // Call external AI (Gemini) as in the controller
+            const geminiResponse = await axios.post('https://api.gemini.com/v1/query', {
+                query: messageText,
+                key: process.env.GEMINI_API_KEY
+            });
+
+            const response = geminiResponse?.data?.answer || null;
+            return response;
+        } catch (err) {
+            console.error("❌ AI Reply Error:", err?.message || err);
+            return null;
+        }
+    }
 
     io.on("connection", (socket) => {
         console.log("⚡ User connected:", socket.id);
