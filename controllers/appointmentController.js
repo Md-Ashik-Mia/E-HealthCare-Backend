@@ -59,7 +59,10 @@ exports.getMyAppointments = async (req, res) => {
 
     const appointments = await Appointment.find({
       $or: [{ patientId: userId }, { doctorId: userId }],
-    }).sort({ createdAt: -1 });
+    })
+    .populate('patientId', 'name email')
+    .populate('doctorId', 'name email')
+    .sort({ createdAt: -1 });
 
     res.json(appointments);
   } catch (error) {

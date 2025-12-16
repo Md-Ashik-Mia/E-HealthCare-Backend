@@ -19,7 +19,7 @@ exports.getProfile = async (req, res) => {
 // Update/Create Profile
 exports.updateProfile = async (req, res) => {
   try {
-    const { age, bloodGroup, gender, phone, address, emergencyContact } = req.body;
+    const { age, bloodGroup, gender, phone, address, emergencyContact, healthMetrics } = req.body;
 
     // Upsert: update if exists, create if not
     const profile = await PatientProfile.findOneAndUpdate(
@@ -31,11 +31,12 @@ exports.updateProfile = async (req, res) => {
           gender,
           phone,
           address,
-          emergencyContact
+          emergencyContact,
+          healthMetrics
         }
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
-    );
+    ).populate("userId", "name email");
 
     res.json(profile);
   } catch (err) {

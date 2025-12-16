@@ -3,34 +3,78 @@ require("dotenv").config();
 const http = require("http");
 const { Server } = require("socket.io");
 const mongoose = require("mongoose");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Message = require("./models/Message");  
 const Conversation = require("./models/Conversation");
 const DoctorProfile = require("./models/DoctorProfile");
+const User = require("./models/User");
+const AIResponse = require("./models/ai.model");
+
+const initializeSocket = (server) => {
+    const io = new Server(server, {
+        cors: {
+           origin: [
+                "http://localhost:3000", 
+                "https://e-health-care-front-end.vercel.app",
+                "https://e-healthcare-backend.onrender.com"
+            ],
+            methods: ["GET", "POST"]
+        }
+    });
+
     console.log("🟢 Socket.io Initialized");
 
     // track online users: Map<userId, socketId>
     const onlineUsers = new Map();
 
+    // Initialize Gemini AI
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+
+
     // Safe AI reply generator used by the socket logic. Returns a string or null.
-    async function generateAIReply(doctorId, messageText) {
+    async function generateAIReply(doctorId, messageText, doctorName) {
         try {
             // Check doctor-specific AI settings
             const settings = await AIResponse.findOne({ doctorId });
-            if (!settings || !settings.isAIEnabled) return null;
+            console.log(`🔍 AI Settings for ${doctorId}:`, settings);
+
+            if (!settings || !settings.isAIEnabled) {
+                console.log("⚠️ AI Auto-Reply disabled or settings not found for this doctor.");
+                return null;
+            }
 
             // If no external AI key, skip calling external API and return null
-            if (!process.env.GEMINI_API_KEY) return null;
+            if (!process.env.GEMINI_API_KEY) {
+                console.error("❌ Missing GEMINI_API_KEY in environment variables.");
+                return null;
+            }
+            console.log(`🔑 AI Key Loaded: ${process.env.GEMINI_API_KEY.substring(0, 5)}...`);
 
-            // Call external AI (Gemini) as in the controller
-            const geminiResponse = await axios.post('https://api.gemini.com/v1/query', {
-                query: messageText,
-                key: process.env.GEMINI_API_KEY
-            });
+            console.log(`🤖 Generative AI replying for Dr. ${doctorName}...`);
 
-            const response = geminiResponse?.data?.answer || null;
-            return response;
+            const prompt = `
+                You are a helpful AI assistant replying on behalf of Dr. ${doctorName}.
+                The doctor is currently unavailable. 
+                
+                Patient's message: "${messageText}"
+                
+                Instructions:
+                1. Acknowledge the patient's message politely.
+                2. State that the doctor is currently away/busy but will see the message soon.
+                3. If the message contains a simple general query, provide a brief, general guideline (do NOT give specific medical advice or diagnosis).
+                4. Keep the response short, professional, and reassuring.
+                5. Max 2-3 sentences.
+            `;
+
+            const result = await model.generateContent(prompt);
+            const response = result.response;
+            return response.text();
+            
         } catch (err) {
-            console.error("❌ AI Reply Error:", err?.message || err);
+            console.error("❌ AI Reply Error Full:", JSON.stringify(err, null, 2));
+            console.error("❌ AI Reply Error Message:", err.message);
             return null;
         }
     }
@@ -74,9 +118,10 @@ const DoctorProfile = require("./models/DoctorProfile");
 
         // 3️⃣ Real-time Messaging
         socket.on("message:send", async (data) => {
+            console.log("🔥 MESSAGE:SEND HANDLER TRIGGERED with data:", JSON.stringify(data, null, 2));
             try {
                 const { conversationId, from, to, message } = data;
-                console.log("📨 Message received:", { conversationId, from, to, message });
+                console.log("📨 Message details:", { conversationId, from, to, message });
 
                 // Save message to database
                 const msg = await Message.create({
@@ -108,10 +153,13 @@ const DoctorProfile = require("./models/DoctorProfile");
                 }
 
                 // AI Auto Reply Logic
+                console.log("🔍 Looking up receiver for AI check. ID:", to);
                 const receiver = await User.findById(to);
+                console.log("👤 Receiver found:", receiver ? `${receiver.name} (${receiver.role})` : "null");
+
                 if (receiver && receiver.role === "doctor") {
                     // patient → doctor message → maybe AI reply
-                    const aiReply = await generateAIReply(receiver._id, message);
+                    const aiReply = await generateAIReply(receiver._id, message, receiver.name);
 
                     if (aiReply) {
                         const replyMsg = await Message.create({
@@ -175,6 +223,8 @@ const DoctorProfile = require("./models/DoctorProfile");
             }
         });
     });
+
+    return io;
 };
 
 // Export both the initialization function and a way to get the io instance

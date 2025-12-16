@@ -29,6 +29,13 @@ const PatientProfileSchema = new mongoose.Schema({
     relation: String,
     phone: String,
   },
+  healthMetrics: {
+    heartRate: { type: String, default: 'N/A' },
+    bloodPressure: { type: String, default: 'N/A' },
+    weight: { type: String, default: 'N/A' },
+    bloodGlucose: { type: String, default: 'N/A' },
+    lastUpdated: { type: Date, default: Date.now }
+  }
 }, { timestamps: true });
 
 module.exports = mongoose.model("PatientProfile", PatientProfileSchema);

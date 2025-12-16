@@ -26,7 +26,7 @@ exports.register = async (req, res) => {
 
     res.json({ message: "Patient registered successfully" });
   } catch (err) {
-    res.status(500).json(err);
+    res.status(500).json({ message: err.message });
   }
 };
 
@@ -52,8 +52,16 @@ exports.login = async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({ token, user });
+    // Return a safe, consistent user DTO (avoid leaking passwordHash, __v, etc.)
+    const safeUser = {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    };
+
+    res.json({ token, user: safeUser });
   } catch (err) {
-    res.status(500).json(err);
+    res.status(500).json({ message: err.message });
   }
 };
