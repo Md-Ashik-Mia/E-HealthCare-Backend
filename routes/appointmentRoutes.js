@@ -8,6 +8,8 @@ const {
   getMyAppointments,
   cancelAppointment,
   markAsPaid,
+  confirmAppointment,
+  completeAppointment
 } = require("../controllers/appointmentController");
 const role = require("../middleware/role");
 
@@ -22,6 +24,12 @@ router.get("/my", auth, getMyAppointments);
 
 // 📌 Cancel appointment
 router.patch("/:id/cancel", auth,role('doctor','patient'), cancelAppointment);
+
+// 📌 Confirm appointment
+router.patch("/:id/confirm", auth, role('doctor'), confirmAppointment);
+
+// 📌 Complete appointment
+router.patch("/:id/complete", auth, role('doctor'), completeAppointment);
 
 // 📌 Mark appointment paid
 router.patch("/:id/pay", auth, markAsPaid);

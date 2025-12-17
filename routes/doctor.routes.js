@@ -6,6 +6,7 @@ const controller = require("../controllers/doctor.controller");
 router.get("/profile", auth, role("doctor"), controller.getProfile);
 router.patch("/profile", auth, role("doctor"), controller.updateProfile);
 router.get("/patients/:id", auth, role("doctor"), controller.getPatientDetails);
+router.post("/patients/:id/notes", auth, role("doctor"), controller.addPatientPrivateNote);
 router.get("/patients", auth, role("doctor"), controller.getPatients);
 
 module.exports = router;

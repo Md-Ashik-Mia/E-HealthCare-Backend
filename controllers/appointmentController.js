@@ -70,6 +70,42 @@ exports.getMyAppointments = async (req, res) => {
   }
 };
 
+// 📌 Confirm Appointment
+exports.confirmAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedAppointment = await Appointment.findByIdAndUpdate(
+      id,
+      { status: "confirmed" },
+      { new: true }
+    );
+     if (!updatedAppointment) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
+    res.json({ message: "Appointment confirmed", appointment: updatedAppointment });
+  } catch (error) {
+    res.status(500).json({ message: "Internal error", error: error.message });
+  }
+};
+
+// 📌 Complete Appointment
+exports.completeAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedAppointment = await Appointment.findByIdAndUpdate(
+      id,
+      { status: "completed" },
+      { new: true }
+    );
+     if (!updatedAppointment) {
+      return res.status(404).json({ message: "Appointment not found" });
+    }
+    res.json({ message: "Appointment completed", appointment: updatedAppointment });
+  } catch (error) {
+    res.status(500).json({ message: "Internal error", error: error.message });
+  }
+};
+
 // 📌 Cancel Appointment
 exports.cancelAppointment = async (req, res) => {
   try {

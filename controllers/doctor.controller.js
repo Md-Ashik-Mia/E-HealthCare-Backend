@@ -1,4 +1,6 @@
 const DoctorProfile = require("../models/DoctorProfile");
+const AIResponse = require("../models/ai.model");
+const DoctorPrivateNote = require("../models/DoctorPrivateNote");
 
 exports.getProfile = async (req, res) => {
   try {
@@ -25,6 +27,22 @@ exports.updateProfile = async (req, res) => {
 
     if (!updated) {
       return res.status(404).json({ message: 'Profile not found' });
+    }
+
+    // Sync to AIResponse doc so chat UI + socket logic stay consistent.
+    // Only sync when these fields are present in the request body (avoid overwriting unintentionally).
+    const shouldSyncAIEnabled = Object.prototype.hasOwnProperty.call(req.body, "isAutoAIReplyEnabled");
+    const shouldSyncInstructions = Object.prototype.hasOwnProperty.call(req.body, "aiInstructions");
+    if (shouldSyncAIEnabled || shouldSyncInstructions) {
+      const update = {};
+      if (shouldSyncAIEnabled) update.isAIEnabled = !!updated.isAutoAIReplyEnabled;
+      if (shouldSyncInstructions) update.instructions = updated.aiInstructions || "";
+
+      await AIResponse.findOneAndUpdate(
+        { doctorId: req.user.sub },
+        { $set: update, $setOnInsert: { doctorId: req.user.sub } },
+        { new: true, upsert: true }
+      );
     }
 
     res.json(updated);
@@ -104,6 +122,12 @@ exports.getPatientDetails = async (req, res) => {
     const medicalRecords = await MedicalRecord.find({ patientId: id })
       .sort({ updatedAt: -1 });
 
+    // 5. Fetch doctor-only private notes (scoped to logged-in doctor)
+    const privateNotes = await DoctorPrivateNote.find({
+      doctorId: req.user.sub,
+      patientId: id,
+    }).sort({ createdAt: -1 });
+
     // Combine Data
     const fullRecord = {
       ...user.toObject(),
@@ -111,10 +135,32 @@ exports.getPatientDetails = async (req, res) => {
       emergencyContact: profile?.emergencyContact || {},
       profile: profile || {}, // Full profile doc
       prescriptions,
-      medicalRecords
+      medicalRecords,
+      privateNotes,
     };
 
     res.json(fullRecord);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.addPatientPrivateNote = async (req, res) => {
+  try {
+    const { id } = req.params; // patientId
+    const content = (req.body?.content || "").toString().trim();
+
+    if (!content) {
+      return res.status(400).json({ message: "Note content is required" });
+    }
+
+    const created = await DoctorPrivateNote.create({
+      doctorId: req.user.sub,
+      patientId: id,
+      content,
+    });
+
+    res.status(201).json(created);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

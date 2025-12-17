@@ -9,6 +9,13 @@ const ConversationSchema = new mongoose.Schema(
       },
     ],
 
+    // Per-conversation override for doctor AI auto-replies.
+    // null => inherit doctor's global setting.
+    aiAutoReplyEnabled: {
+      type: Boolean,
+      default: null,
+    },
+
     lastMessage: {
       type: String,
       default: "",

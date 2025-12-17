@@ -6,6 +6,17 @@ const notificationSchema = new mongoose.Schema({
     ref: "User",
     required: true,
   },
+  // Optional metadata for message notifications
+  conversationId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Conversation",
+    required: false,
+  },
+  fromUserId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: false,
+  },
   type: {
     type: String,
     enum: ["appointment", "message", "prescription", "reminder", "system"],
