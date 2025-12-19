@@ -13,22 +13,89 @@ const AIResponse = require("./models/ai.model");
 const DoctorPrivateNote = require("./models/DoctorPrivateNote");
 const Notification = require("./models/Notification");
 
+const defaultCorsOrigins = ["http://localhost:3000"];
+const envCorsOrigins = (process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+const corsOrigins = [...new Set([...defaultCorsOrigins, ...envCorsOrigins])];
+
 const initializeSocket = (server) => {
     const io = new Server(server, {
         cors: {
-           origin: [
-                "http://localhost:3000", 
-                "https://e-health-care-front-end.vercel.app",
-                "https://e-healthcare-backend.onrender.com"
-            ],
-            methods: ["GET", "POST"]
+           origin: corsOrigins,
+            methods: ["GET", "POST", "OPTIONS"],
+            credentials: true,
+            allowedHeaders: ["Content-Type", "Authorization"]
         }
     });
 
     console.log("🟢 Socket.io Initialized");
 
-    // track online users: Map<userId, socketId>
+    // Track online users: Map<userId, Set<socketId>>
+    // We also make each socket join a per-user room (named by userId string)
+    // so we can emit via `io.to(userId)` for messages/calls/notifications.
     const onlineUsers = new Map();
+
+    function normalizeUserId(userId) {
+        if (userId === null || userId === undefined) return null;
+        try {
+            return String(userId);
+        } catch {
+            return null;
+        }
+    }
+
+    function addOnlineSocket(userId, socketId) {
+        const id = normalizeUserId(userId);
+        if (!id) return;
+        const set = onlineUsers.get(id) || new Set();
+        set.add(socketId);
+        onlineUsers.set(id, set);
+    }
+
+    function removeOnlineSocket(userId, socketId) {
+        const id = normalizeUserId(userId);
+        if (!id) return;
+        const set = onlineUsers.get(id);
+        if (!set) return;
+        set.delete(socketId);
+        if (set.size === 0) onlineUsers.delete(id);
+        else onlineUsers.set(id, set);
+    }
+
+    function emitPresenceUpdate() {
+        io.emit("presence:update", [...onlineUsers.keys()]);
+    }
+
+    function serializeObjectId(value) {
+        if (value === null || value === undefined) return value;
+        try {
+            return value.toString();
+        } catch {
+            return value;
+        }
+    }
+
+    function serializeMessageDoc(doc) {
+        if (!doc) return doc;
+        const obj = typeof doc.toObject === "function" ? doc.toObject({ virtuals: false }) : { ...doc };
+        if (obj._id) obj._id = serializeObjectId(obj._id);
+        if (obj.conversationId) obj.conversationId = serializeObjectId(obj.conversationId);
+        if (obj.senderId) obj.senderId = serializeObjectId(obj.senderId);
+        if (obj.receiverId) obj.receiverId = serializeObjectId(obj.receiverId);
+        return obj;
+    }
+
+    function serializeNotificationDoc(doc) {
+        if (!doc) return doc;
+        const obj = typeof doc.toObject === "function" ? doc.toObject({ virtuals: false }) : { ...doc };
+        if (obj._id) obj._id = serializeObjectId(obj._id);
+        if (obj.userId) obj.userId = serializeObjectId(obj.userId);
+        if (obj.fromUserId) obj.fromUserId = serializeObjectId(obj.fromUserId);
+        if (obj.conversationId) obj.conversationId = serializeObjectId(obj.conversationId);
+        return obj;
+    }
 
     // Initialize Gemini AI (optional)
     const geminiModelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
@@ -266,44 +333,49 @@ Hard rules:
 
         // 1️⃣ Register user (online)
         socket.on("user:online", (userId) => {
-            onlineUsers.set(userId, socket.id);
-            socket.userId = userId;
+            const normalized = normalizeUserId(userId);
+            if (!normalized) return;
+
+            addOnlineSocket(normalized, socket.id);
+            socket.userId = normalized;
 
             // Join a per-user room so other server modules can emit via `io.to(userId)`.
             // This also enables notifications delivery even if a user reconnects with a new socket id.
             try {
-                socket.join(userId.toString());
+                socket.join(normalized);
             } catch {}
 
-            console.log(`🟢 User Online: ${userId}`);
-
-            io.emit("presence:update", [...onlineUsers.keys()]);
+            console.log(`🟢 User Online: ${normalized}`);
+            emitPresenceUpdate();
         });
 
         // 2️⃣ Typing Indicator
         socket.on("typing:start", (data) => {
-            const targetSocket = onlineUsers.get(data.to);
-            if (targetSocket) {
-                io.to(targetSocket).emit("typing:start", {
-                    from: data.from,
-                });
-            }
+            const to = normalizeUserId(data?.to);
+            const from = normalizeUserId(data?.from);
+            if (!to || !from) return;
+            io.to(to).emit("typing:start", { from });
         });
 
         socket.on("typing:stop", (data) => {
-            const targetSocket = onlineUsers.get(data.to);
-            if (targetSocket) {
-                io.to(targetSocket).emit("typing:stop", {
-                    from: data.from,
-                });
-            }
+            const to = normalizeUserId(data?.to);
+            const from = normalizeUserId(data?.from);
+            if (!to || !from) return;
+            io.to(to).emit("typing:stop", { from });
         });
 
         // 3️⃣ Real-time Messaging
         socket.on("message:send", async (data) => {
             console.log("🔥 MESSAGE:SEND HANDLER TRIGGERED with data:", JSON.stringify(data, null, 2));
             try {
-                const { conversationId, from, to, message } = data;
+                const conversationId = data?.conversationId;
+                const from = normalizeUserId(data?.from);
+                const to = normalizeUserId(data?.to);
+                const message = data?.message;
+
+                if (!conversationId || !from || !to || typeof message !== "string") {
+                    throw new Error("Invalid message payload");
+                }
                 console.log("📨 Message details:", { conversationId, from, to, message });
 
                 // Fetch users for notification + AI prompt context
@@ -321,6 +393,8 @@ Hard rules:
                 });
                 console.log("✅ Message saved to DB:", msg._id);
 
+                const msgPayload = serializeMessageDoc(msg);
+
                 // Update conversation's lastMessage
                 await Conversation.findByIdAndUpdate(conversationId, {
                     lastMessage: message,
@@ -329,17 +403,15 @@ Hard rules:
                 console.log("✅ Conversation updated");
 
                 // Send confirmation to sender
-                socket.emit("message:receive", msg);
+                // Use room-based emit so all sender tabs/devices see the confirmation.
+                io.to(from).emit("message:receive", msgPayload);
+                // Fallback for the very early window before `user:online`/room join.
+                socket.emit("message:receive", msgPayload);
                 console.log("📤 Confirmation sent to sender");
 
-                // Deliver to receiver if online
-                const targetSocket = onlineUsers.get(to);
-                if (targetSocket) {
-                    io.to(targetSocket).emit("message:receive", msg);
-                    console.log("📤 Message sent to receiver");
-                } else {
-                    console.log("⚠️ Receiver offline");
-                }
+                // Deliver to receiver (room-based; no-op if offline)
+                io.to(to).emit("message:receive", msgPayload);
+                console.log("📤 Message emitted to receiver room");
 
                 // Create a persisted notification for the receiver (works for both patient and doctor)
                 if (receiverUser) {
@@ -360,11 +432,10 @@ Hard rules:
                         link,
                     });
 
-                    // Emit real-time notification (room-based + fallback to direct socket id)
-                    io.to(receiverUser._id.toString()).emit("notification:new", notification);
-                    if (targetSocket) {
-                        io.to(targetSocket).emit("notification:new", notification);
-                    }
+                    const notificationPayload = serializeNotificationDoc(notification);
+
+                    // Emit real-time notification (room-based)
+                    io.to(receiverUser._id.toString()).emit("notification:new", notificationPayload);
                 }
 
                 // AI Auto Reply Logic
@@ -393,6 +464,8 @@ Hard rules:
                             isAI: true
                         });
 
+                        const replyPayload = serializeMessageDoc(replyMsg);
+
                         // Update conversation with AI reply
                         await Conversation.findByIdAndUpdate(conversationId, {
                             lastMessage: aiReply,
@@ -400,12 +473,10 @@ Hard rules:
                         });
 
                         // Send AI reply to patient
-                        io.to(socket.id).emit("message:receive", replyMsg);
-                        
-                        // Send to doctor if online
-                        if (targetSocket) {
-                            io.to(targetSocket).emit("message:receive", replyMsg);
-                        }
+                        io.to(from).emit("message:receive", replyPayload);
+
+                        // Send to doctor (all doctor tabs/devices)
+                        io.to(to).emit("message:receive", replyPayload);
                         console.log("🤖 AI reply sent");
                     }
                 }
@@ -417,23 +488,27 @@ Hard rules:
 
         // 4️⃣ WebRTC Signaling (Audio/Video Calls)
         socket.on("call:offer", (data) => {
-            const targetSocket = onlineUsers.get(data.to);
-            if (targetSocket) io.to(targetSocket).emit("call:offer", data);
+            const to = normalizeUserId(data?.to);
+            if (!to) return;
+            io.to(to).emit("call:offer", data);
         });
 
         socket.on("call:answer", (data) => {
-            const targetSocket = onlineUsers.get(data.to);
-            if (targetSocket) io.to(targetSocket).emit("call:answer", data);
+            const to = normalizeUserId(data?.to);
+            if (!to) return;
+            io.to(to).emit("call:answer", data);
         });
 
         socket.on("call:ice-candidate", (data) => {
-            const targetSocket = onlineUsers.get(data.to);
-            if (targetSocket) io.to(targetSocket).emit("call:ice-candidate", data);
+            const to = normalizeUserId(data?.to);
+            if (!to) return;
+            io.to(to).emit("call:ice-candidate", data);
         });
 
         socket.on("call:end", (data) => {
-            const targetSocket = onlineUsers.get(data.to);
-            if (targetSocket) io.to(targetSocket).emit("call:end", data);
+            const to = normalizeUserId(data?.to);
+            if (!to) return;
+            io.to(to).emit("call:end", data);
         });
 
         // 5️⃣ Disconnect event
@@ -441,8 +516,8 @@ Hard rules:
             console.log("🔴 User disconnected:", socket.id);
 
             if (socket.userId) {
-                onlineUsers.delete(socket.userId);
-                io.emit("presence:update", [...onlineUsers.keys()]);
+                removeOnlineSocket(socket.userId, socket.id);
+                emitPresenceUpdate();
             }
         });
     });

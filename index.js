@@ -12,16 +12,22 @@ const server = http.createServer(app);
 // Initialize Socket.io
 initializeSocket(server);
 
-app.use(cors({
-    origin: [
-        "http://localhost:3000", 
-        "https://e-health-care-front-end.vercel.app",
-        "https://e-healthcare-backend.onrender.com"
-    ],
+const defaultCorsOrigins = ["http://localhost:3000"];
+const envCorsOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const corsOrigins = [...new Set([...defaultCorsOrigins, ...envCorsOrigins])];
+
+app.use(
+  cors({
+    origin: corsOrigins,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"]
-}));
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
 // Connect DB
